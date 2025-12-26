@@ -1,0 +1,5 @@
+await wrapper.wrapCall(
+  targetContract,
+  0,
+  targetContract.interface.encodeFunctionData("mint", [1])
+);
