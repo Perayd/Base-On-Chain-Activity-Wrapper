@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// @title BaseActivityWrapper
+/// @author non stop baseposter
+/// @notice Wraps and logs all onchain activity on Base
+/// @dev EVM compatible (Base, Ethereum, Arbitrum, etc.)
+
+interface IERC20 {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool);
+}
+
+contract BaseActivityWrapper {
+
+    /*//////////////////////////////////////////////////////////////
+                                EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    event ActivityWrapped(
+        address indexed user,
+        address indexed target,
+        uint256 value,
+        bytes data,
+        bytes result,
+        uint256 timestamp
+    );
+
+    event ETHWrapped(
+        address indexed from,
+        address indexed to,
+        uint256 amount
+    );
+
+    event ERC20Wrapped(
+        address indexed token,
+        address indexed from,
+        address indexed to,
+        uint256 amount
+    );
+
+    /*//////////////////////////////////////////////////////////////
+                            CORE EXECUTION
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Execute any onchain call and wrap it with logging
+    /// @param target Contract to call
+    /// @param value ETH value to send
+    /// @param data Calldata
+    function wrapCall(
+        address target,
+        uint256 value,
+        bytes calldata data
+    ) external payable returns (bytes memory result) {
+        require(msg.value == value, "Incorrect ETH sent");
+
+        (bool success, bytes memory res) = target.call{value: value}(data);
+        require(success, "Wrapped call failed");
+
+        emit ActivityWrapped(
+            msg.sender,
+            target,
+            value,
+            data,
+            res,
+            block.timestamp
+        );
+
+        return res;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            ETH WRAPPING
+    //////////////////////////////////////////////////////////////*/
+
+    function wrapETH(address payable to) external payable {
+        require(msg.value > 0, "No ETH sent");
+
+        (bool success, ) = to.call{value: msg.value}("");
+        require(success, "ETH transfer failed");
+
+        emit ETHWrapped(msg.sender, to, msg.value);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        ERC20 WRAPPING
+    //////////////////////////////////////////////////////////////*/
+
+    function wrapERC20(
+        address token,
+        address to,
+        uint256 amount
+    ) external {
+        require(amount > 0, "Zero amount");
+
+        bool success = IERC20(token).transferFrom(
+            msg.sender,
+            to,
+            amount
+        );
+        require(success, "ERC20 transfer failed");
+
+        emit ERC20Wrapped(token, msg.sender, to, amount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            MULTI CALL
+    //////////////////////////////////////////////////////////////*/
+
+    function wrapBatch(
+        address[] calldata targets,
+        uint256[] calldata values,
+        bytes[] calldata data
+    ) external payable {
+        require(
+            targets.length == data.length &&
+            targets.length == values.length,
+            "Length mismatch"
+        );
+
+        uint256 totalValue;
+        for (uint256 i = 0; i < values.length; i++) {
+            totalValue += values[i];
+        }
+
+        require(msg.value == totalValue, "Invalid ETH total");
+
+        for (uint256 i = 0; i < targets.length; i++) {
+            (bool success, bytes memory res) =
+                targets[i].call{value: values[i]}(data[i]);
+
+            require(success, "Batch call failed");
+
+            emit ActivityWrapped(
+                msg.sender,
+                targets[i],
+                values[i],
+                data[i],
+                res,
+                block.timestamp
+            );
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            RECEIVE
+    //////////////////////////////////////////////////////////////*/
+
+    receive() external payable {}
+}
